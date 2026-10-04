@@ -1,5 +1,6 @@
 {
   "name": "f1race",
+  "packageManager": "pnpm@11.24.0",
   "private": true,
   "version": "0.6.0",
   "description": "F1race - 像素风 2D 俯视单机赛车（M1 可驾驶 → M2 计时 → M3 漂移 → M4 幽灵车 → M5 AI 与排名与结算 → M6 打磨与对抗）",
