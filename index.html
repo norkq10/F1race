@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>F1race - 像素风 2D 俯视赛车</title>
+    <meta name="description" content="F1race - 像素风 2D 俯视单机赛车，3 圈计时赛。" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-root"></div>
+
+      <!-- HUD：像素风面板，覆盖在画布上方 -->
+      <div id="hud" class="hidden" aria-hidden="true">
+        <div class="hud-panel hud-top-left">
+          <div class="row">
+            <!-- 文案由 Hud.setLapMode() 切换：闭环是"圈数 1/3"，单程赛道是"进度 1/1" -->
+            <span class="label" id="hud-lap-label">圈数</span>
+            <span class="value" id="hud-lap">1<span class="dim">/3</span></span>
+          </div>
+          <div class="row">
+            <span class="label" id="hud-lap-time-label">当前圈速</span>
+            <span class="value mono" id="hud-lap-time">0:00.000</span>
+          </div>
+
+          <!--
+            实时 delta：与参考圈在同一位置的用时差。
+            放在"当前圈速"正下方 —— 它和圈速是同一组信息，视线不用在屏幕上跳。
+            （曾经它单独居中钉在顶部，被"赛道 / 最佳总时间"面板压住过。）
+          -->
+          <div id="hud-delta" class="delta hidden">
+            <span class="delta-value mono" id="hud-delta-value">+0.000</span>
+            <span class="delta-source" id="hud-delta-source">对比 历史最佳圈</span>
+          </div>
+
+          <div class="row">
+            <span class="label">总时间</span>
+            <span class="value mono" id="hud-total-time">0:00.000</span>
+          </div>
+          <div class="row">
+            <span class="label">最佳圈</span>
+            <span class="value mono accent" id="hud-best-lap">--:--.---</span>
+          </div>
+          <div class="row">
+            <span class="label">幽灵车</span>
+            <span class="value mono" id="hud-ghost">无记录</span>
+          </div>
+        </div>
+
+        <div class="hud-panel hud-top-center">
+          <div class="row">
+            <span class="label">赛道</span>
+            <span class="value" id="hud-track">环城赛道</span>
+          </div>
+          <div class="row">
+            <span class="label">最佳总时间</span>
+            <span class="value mono accent" id="hud-best-total">--:--.---</span>
+          </div>
+          <div class="row">
+            <span class="label">难度</span>
+            <span class="value" id="hud-difficulty">普通</span>
+          </div>
+          <div class="row">
+            <span class="label">FPS</span>
+            <span class="value mono dim" id="hud-fps">--</span>
+          </div>
+          <div class="standings-title">
+            排名
+            <span class="mono" id="hud-rank">1<span class="dim">/4</span></span>
+          </div>
+          <ol id="hud-standings" class="standings"></ol>
+        </div>
+
+        <!--
+          小地图：固定贴在右上角，**不随镜头移动**。
+          它是 DOM 覆盖层里的独立 canvas（见 Minimap.ts 的说明），
+          所以天然不属于世界坐标系，镜头怎么动都不会影响它。
+        -->
+        <div class="hud-panel minimap-panel" id="minimap-panel">
+          <canvas id="minimap-canvas" aria-label="小地图"></canvas>
+        </div>
+
+        <div class="hud-panel hud-bottom-left">
+          <div class="speed-line">
+            <span class="speed-value mono" id="hud-speed">0</span>
+            <span class="speed-unit">km/h</span>
+          </div>
+          <div class="surface" id="hud-surface">赛道</div>
+          <div class="drift" id="hud-drift">抓地</div>
+        </div>
+
+        <!-- 赛道与难度选择：都只在发车前可以改（换图会重开比赛） -->
+        <div class="hud-panel hud-difficulty-bar">
+          <span class="label">赛道</span>
+          <div class="segmented" id="track-select">
+            <button type="button" data-track="track1" class="active">环城</button>
+            <button type="button" data-track="track3">峡谷技术</button>
+            <button type="button" data-track="track4">漂移龙</button>
+          </div>
+          <span class="label">难度</span>
+          <div class="segmented" id="difficulty-select">
+            <button type="button" data-difficulty="easy">简单</button>
+            <button type="button" data-difficulty="normal" class="active">普通</button>
+            <button type="button" data-difficulty="hard">困难</button>
+            <button type="button" data-difficulty="inferno" class="danger">炼狱</button>
+          </div>
+          <!--
+            车库入口（CR-15）。放在难度条里而不是单独一个键：玩家"改设置"的视线
+            本来就在这条栏上。按 G 也能开（见 InputController）。
+          -->
+          <button id="btn-garage" type="button" class="bar-button">车库 (G)</button>
+        </div>
+
+        <div class="hud-panel hud-bottom-right">
+          <div class="keys-title">操作</div>
+          <div class="keys">
+            <span><b>W</b> 油门</span>
+            <span><b>S</b> 刹车 / 倒车</span>
+            <span><b>A</b> <b>D</b> 转向</span>
+            <span><b>Space</b> 漂移</span>
+            <span><b>G</b> 车库</span>
+            <span><b>R</b> 重新比赛</span>
+            <span><b>Esc</b> 暂停</span>
+          </div>
+        </div>
+
+        <!--
+          底部中列的浮动提示。
+          「本圈无效」与 toast 都曾经钉在顶部正中，和 delta 抢位置；
+          现在统一收在底部、难度条上方，按流式排布（见 style.css 的 .hud-bottom-stack）。
+        -->
+        <div class="hud-bottom-stack">
+          <div id="hud-toast" class="toast hidden"></div>
+          <div id="hud-lap-flag" class="lap-flag hidden">本圈无效</div>
+        </div>
+      </div>
+
+      <!-- 起跑倒计时 -->
+      <div id="countdown" class="countdown hidden"></div>
+
+      <!-- 暂停 -->
+      <div id="pause" class="overlay hidden">
+        <div class="hud-panel pause-panel">
+          <h2>已暂停</h2>
+          <p class="pause-hint">计时已停止。按 <b>Esc</b> 或 <b>P</b> 继续，按 <b>R</b> 重新比赛。</p>
+          <div class="result-actions">
+            <button id="btn-resume" type="button">继续 (Esc)</button>
+            <button id="btn-restart-pause" type="button" class="ghost">重新比赛 (R)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 结算界面 -->
+      <div id="result" class="overlay hidden">
+        <div class="hud-panel result-panel">
+          <h2 id="result-title">比赛结束</h2>
+          <div id="result-badge" class="badge hidden">新纪录！</div>
+          <div id="result-invalid" class="invalid-banner hidden"></div>
+
+          <div class="result-grid">
+            <div class="row"><span class="label">总时间</span><span class="value mono" id="result-total">--</span></div>
+            <div class="row"><span class="label">与历史最佳</span><span class="value mono" id="result-delta">--</span></div>
+            <div class="row"><span class="label">本场最佳圈</span><span class="value mono" id="result-best-lap">--</span></div>
+            <div class="row"><span class="label">历史最佳圈</span><span class="value mono dim" id="result-best-lap-all">--</span></div>
+            <div class="row"><span class="label">最佳总时间</span><span class="value mono accent" id="result-best-total">--</span></div>
+            <div class="row"><span class="label">此前最佳总时间</span><span class="value mono dim" id="result-previous">--</span></div>
+            <div class="row"><span class="label">难度</span><span class="value" id="result-difficulty">普通</span></div>
+          </div>
+
+          <div class="sub-title">最终排名</div>
+          <ol id="result-standings" class="standings"></ol>
+
+          <!-- 领奖台：1~4 名各一个对应车色的小人，只有冠军上蹦下跳 -->
+          <div class="sub-title">领奖台</div>
+          <div id="podium" class="podium" aria-label="领奖台"></div>
+
+          <div class="sub-title">本场数据</div>
+          <div class="result-grid" id="result-stats"></div>
+
+          <div class="sub-title">各圈成绩</div>
+          <ol id="result-laps" class="laps"></ol>
+
+          <div class="sub-title">最佳圈分段 <span class="dim mono" id="result-sectors">--</span></div>
+
+          <div class="sub-title">最近成绩</div>
+          <ol id="result-history" class="history"></ol>
+
+          <div class="result-actions">
+            <button id="btn-restart" type="button">重新比赛 (R)</button>
+            <button id="btn-clear-save" type="button" class="ghost">清除纪录</button>
+          </div>
+        </div>
+      </div>
+
+      <!--
+        车库：皮肤选择（CR-15）。
+        结构是"卡片网格"，每张卡片自带贴图预览与状态文案；具体内容由
+        `src/game/Garage.ts` 按 `SkinStore` 的快照生成 —— HTML 里不留任何皮肤数据，
+        免得"皮肤清单"又多出一份会与 `Skins.ts` 漂移的副本。
+      -->
+      <div id="garage" class="overlay hidden">
+        <div class="hud-panel garage-panel">
+          <h2>车库 <span class="dim">· 车辆皮肤</span></h2>
+          <p class="garage-hint">
+            皮肤<strong>不影响任何数值</strong>（速度 / 抓地 / 碰撞 / 计时都一样）。
+            通过<strong>刷新赛道纪录</strong>抽奖获得，装备后下一场比赛使用。
+          </p>
+          <div class="garage-summary">
+            <span>已拥有 <b id="garage-owned-count">1/6</b></span>
+            <span>当前使用 <b id="garage-equipped">原厂</b></span>
+          </div>
+          <div id="garage-grid" class="garage-grid" aria-label="皮肤列表"></div>
+          <div class="result-actions">
+            <button id="btn-garage-close" type="button">返回比赛 (Esc)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 抽奖（老虎机）：只在刷新本赛道最佳总时间时出现 -->
+      <div id="lottery" class="overlay lottery hidden">
+        <div class="hud-panel lottery-panel">
+          <h2 id="lottery-title">刷新纪录 · 抽奖</h2>
+          <p class="lottery-hint" id="lottery-hint">转动中…</p>
+          <!--
+            上面这句是"转动期间"的提示，必须**与结果无关、恒定不变**（`SlotMachine.SPIN_HINT`）。
+            这里刻意写成与 JS 完全一样的一句：面板万一在 JS 接手前被看见，也不会闪出别的话。
+            玩法说明（"三连相同即中奖"）不放这儿 —— 它含"中奖"二字，混在提示里就是剧透。
+            结果统一由 `#lottery-verdict` 在停稳后给出。
+          -->
+
+          <div class="slot-machine" id="slot-machine">
+            <div class="reel"><div class="reel-strip" id="reel-0"></div></div>
+            <div class="reel"><div class="reel-strip" id="reel-1"></div></div>
+            <div class="reel"><div class="reel-strip" id="reel-2"></div></div>
+          </div>
+
+          <div id="lottery-verdict" class="lottery-verdict hidden"></div>
+
+          <!--
+            中奖产出（CR-15）：抽到的皮肤与"是否重复"的明确交代。
+            重复抽到已有的皮肤**必须**在这里说清楚，不能静默吞掉 ——
+            这是玩家最容易记恨的做法（见 Skins.unlockSkin 的说明）。
+          -->
+          <div id="lottery-skin" class="lottery-skin hidden">
+            <img id="lottery-skin-thumb" alt="" draggable="false" />
+            <div class="lottery-skin-text">
+              <div class="lottery-skin-title" id="lottery-skin-title">获得新皮肤</div>
+              <div class="lottery-skin-desc" id="lottery-skin-desc"></div>
+            </div>
+          </div>
+
+          <div class="result-actions">
+            <button id="btn-lottery-close" type="button">收下 (Enter)</button>
+          </div>
+        </div>
+        <div id="lottery-burst" class="lottery-burst" aria-hidden="true"></div>
+      </div>
+
+      <!-- 启动 / 失败提示 -->
+      <div id="boot" class="overlay boot">
+        <div class="boot-text">F1race 载入中…</div>
+      </div>
+      <div id="fatal" class="overlay hidden">
+        <div class="hud-panel fatal-panel">
+          <h2>启动失败</h2>
+          <pre id="fatal-message"></pre>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
