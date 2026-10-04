@@ -21,15 +21,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 替换掉原来的 pnpm/action-setup 步骤
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/setup@v3
+        with:
+          version: 11
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
-
+          
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
